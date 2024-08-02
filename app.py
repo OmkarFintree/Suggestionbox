@@ -110,19 +110,17 @@ def add_suggestion(conn, username, suggestion):
     except Error as e:
         st.error(f"Error adding suggestion: {e}")
 
-def get_suggestions(conn, username=None, include_admin_deleted=False):
+def get_suggestions(conn, username=None, include_admin_deleted=False, is_admin=False):
     try:
         c = conn.cursor()
-        if username:
-            if include_admin_deleted:
-                c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE username = ?', (username,))
-            else:
-                c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE username = ? AND admin_deleted = 0', (username,))
-        else:
+        if is_admin:
             if include_admin_deleted:
                 c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions')
             else:
                 c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE admin_deleted = 0')
+        else:
+            c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE username = ? AND admin_deleted = 0', (username,))
+        
         return c.fetchall()
     except Error as e:
         st.error(f"Error retrieving suggestions: {e}")
@@ -313,8 +311,8 @@ def suggestion_box_page():
 
     # View Suggestions Tab
     with tab2:
-        st.subheader("All Suggestions")
-        all_suggestions = get_suggestions(conn, username=st.session_state.username, include_admin_deleted=False)
+        st.subheader("Your Suggestions")
+        all_suggestions = get_suggestions(conn, username=st.session_state.username, is_admin=st.session_state.is_admin, include_admin_deleted=False)
         suggestion_map = {}
 
         # Organize replies under their corresponding suggestions
@@ -392,7 +390,7 @@ def suggestion_box_page():
                         displayed_replies.add(suggestion)
 
         if not all_suggestions:
-            st.info("There are no suggestions yet.")
+            st.info("You have no suggestions yet.")
 
     # Logout button
     if st.button("Logout"):
@@ -447,7 +445,7 @@ def admin_panel():
     # View All Suggestions Tab
     if selected == "View All Suggestions":
         st.subheader("All Suggestions (Admin View)")
-        all_suggestions = get_suggestions(conn, include_admin_deleted=True)
+        all_suggestions = get_suggestions(conn, is_admin=True, include_admin_deleted=True)
         suggestion_map = {}
         
         # Organize replies under their corresponding suggestions
