@@ -31,18 +31,10 @@ def create_table(conn):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL,
                 suggestion TEXT NOT NULL,
-                admin_deleted INTEGER NOT NULL DEFAULT 0  -- Mark as deleted by admin
+                admin_deleted INTEGER NOT NULL DEFAULT 0
             )
         ''')
         conn.commit()
-        
-        # Ensure the admin_deleted column exists
-        c.execute("PRAGMA table_info(suggestions)")
-        columns = [column[1] for column in c.fetchall()]
-        if 'admin_deleted' not in columns:
-            c.execute('ALTER TABLE suggestions ADD COLUMN admin_deleted INTEGER NOT NULL DEFAULT 0')
-            conn.commit()
-
     except Error as e:
         st.error(e)
 
@@ -107,12 +99,12 @@ def get_suggestions(conn, username=None, include_admin_deleted=False):
             if include_admin_deleted:
                 c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE username = ?', (username,))
             else:
-                c.execute('SELECT id, username, suggestion FROM suggestions WHERE username = ? AND admin_deleted = 0', (username,))
+                c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE username = ? AND admin_deleted = 0', (username,))
         else:
             if include_admin_deleted:
                 c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions')
             else:
-                c.execute('SELECT id, username, suggestion FROM suggestions WHERE admin_deleted = 0')
+                c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE admin_deleted = 0')
         return c.fetchall()
     except Error as e:
         st.error(e)
@@ -309,27 +301,27 @@ def suggestion_box_page():
     # View Suggestions Tab
     with tab2:
         st.subheader("All Suggestions")
-        all_suggestions = get_suggestions(conn, include_admin_deleted=False)  # Exclude admin-deleted for user view
+        all_suggestions = get_suggestions(conn, include_admin_deleted=False)
         suggestion_map = {}
 
         # Organize replies under their corresponding suggestions
-        for sugg_id, sugg_user, suggestion in all_suggestions:
+        for sugg_id, sugg_user, suggestion, admin_deleted in all_suggestions:
             if suggestion.startswith("Reply to"):
                 # Extract the suggestion ID this reply belongs to
                 reply_to_id = int(suggestion.split(":")[0].split(" ")[-1])
                 if reply_to_id in suggestion_map:
-                    suggestion_map[reply_to_id].append((sugg_id, sugg_user, suggestion))
+                    suggestion_map[reply_to_id].append((sugg_id, sugg_user, suggestion, admin_deleted))
                 else:
-                    suggestion_map[reply_to_id] = [(sugg_id, sugg_user, suggestion)]
+                    suggestion_map[reply_to_id] = [(sugg_id, sugg_user, suggestion, admin_deleted)]
             else:
                 # Add normal suggestions
-                suggestion_map[sugg_id] = [(sugg_id, sugg_user, suggestion)]
+                suggestion_map[sugg_id] = [(sugg_id, sugg_user, suggestion, admin_deleted)]
 
         # Display suggestions and their replies
         for main_sugg_id, suggestions in suggestion_map.items():
             # Handle the main suggestion with form
-            for sugg_id, sugg_user, suggestion in suggestions:
-                if sugg_id == main_sugg_id:  # Main suggestion
+            for sugg_id, sugg_user, suggestion, admin_deleted in suggestions:
+                if sugg_id == main_sugg_id and not admin_deleted:  # Main suggestion
                     with st.form(key=f'suggestion_form_{sugg_id}'):
                         user_type = 'Admin' if sugg_user == 'omadmin' else 'User'
                         st.write(f"**User: {user_type}**")
@@ -367,8 +359,8 @@ def suggestion_box_page():
 
             # Display reply box if needed (outside form)
             if 'reply_to' in st.session_state and st.session_state.reply_to == main_sugg_id:
-                reply = st.text_area("Your Reply", key=f"reply_text_{main_sugg_id}")
-                if st.button(label="Submit Reply", key=f"submit_reply_{main_sugg_id}"):
+                reply = st.text_area("Your Reply", key=f"reply_text_{main_sugg_id}_unique")
+                if st.button(label="Submit Reply", key=f"submit_reply_{main_sugg_id}_unique"):
                     if reply.strip():
                         add_reply(conn, st.session_state.username, main_sugg_id, reply)
                         st.success("Reply submitted")
@@ -378,12 +370,14 @@ def suggestion_box_page():
                         st.error("Reply cannot be empty")
 
             # Display replies under each main suggestion
-            for sugg_id, sugg_user, suggestion in suggestions:
+            displayed_replies = set()  # To track displayed replies and avoid duplicates
+            for sugg_id, sugg_user, suggestion, _ in suggestions:
                 if suggestion.startswith("Reply to"):
-                    # Display reply without "Reply to {id}:"
-                    cleaned_reply = suggestion.split(":", 1)[1].strip()
-                    reply_user = 'Admin' if sugg_user == 'omadmin' else 'User'
-                    st.write(f"**Reply from {reply_user}:** {cleaned_reply}")
+                    if suggestion not in displayed_replies:  # Only display if not already shown
+                        cleaned_reply = suggestion.split(":", 1)[1].strip()
+                        reply_user = 'Admin' if sugg_user == 'omadmin' else 'User'
+                        st.write(f"**Reply from {reply_user}:** {cleaned_reply}")
+                        displayed_replies.add(suggestion)
 
         if not all_suggestions:
             st.info("There are no suggestions yet.")
@@ -471,39 +465,42 @@ def admin_panel():
 
                 # Display suggestion with form only for main suggestions
                 if sugg_id == main_sugg_id:
-                    if not admin_deleted:
-                        with st.form(key=f'suggestion_form_admin_{sugg_id}'):
-                            st.write(f"**User: {user_type}**")
-                            st.write(f"**Suggestion:** {suggestion}")
-                            delete_button = st.form_submit_button(label='Delete 🗑️')
-                            reply_button = st.form_submit_button(label='Reply 💬')
-                            if delete_button:
-                                mark_suggestion_deleted_by_admin(conn, sugg_id)
-                                st.success("Suggestion marked as deleted.")
-                                rerun()  # Force a rerun to update the suggestion list
-                            if reply_button and sugg_user != 'omadmin':
-                                st.session_state.reply_to = sugg_id
-                                rerun()  # Force a rerun to update the state
-                else:
-                    # Display replies outside form context
-                    if not admin_deleted:
-                        cleaned_reply = suggestion.split(":", 1)[1].strip()
-                        st.write(f"**Reply from {user_type}:** {cleaned_reply}")
+                    # Allow the admin to view and reply to all suggestions
+                    with st.form(key=f'suggestion_form_admin_{sugg_id}'):
+                        st.write(f"**User: {user_type}**")
+                        st.write(f"**Suggestion:** {suggestion}")
+                        reply_button = st.form_submit_button(label='Reply 💬')
+                        if reply_button:
+                            if st.session_state.get("admin_reply_to", None) == sugg_id:
+                                del st.session_state["admin_reply_to"]
+                            else:
+                                st.session_state["admin_reply_to"] = sugg_id
+                            rerun()  # Force a rerun to update the state
 
                 # Update previous user to current
                 previous_user = sugg_user
 
-                # Display reply box if needed (outside form)
-                if 'reply_to' in st.session_state and st.session_state.reply_to == main_sugg_id:
-                    reply = st.text_area("Your Reply", key=f"reply_text_admin_{sugg_id}")
-                    if st.button(label="Submit Reply", key=f"submit_reply_admin_{sugg_id}"):
-                        if reply.strip():
-                            add_reply(conn, "omadmin", main_sugg_id, reply)
-                            st.success("Reply submitted")
-                            del st.session_state.reply_to  # Reset reply state
-                            rerun()
-                        else:
-                            st.error("Reply cannot be empty")
+            # Display reply box if needed (outside form) with unique key
+            if st.session_state.get("admin_reply_to") == main_sugg_id:
+                reply = st.text_area("Your Reply", key=f"reply_text_admin_{main_sugg_id}_unique")
+                if st.button(label="Submit Reply", key=f"submit_reply_admin_{main_sugg_id}_unique"):
+                    if reply.strip():
+                        add_reply(conn, "omadmin", main_sugg_id, reply)
+                        st.success("Reply submitted")
+                        del st.session_state["admin_reply_to"]  # Reset reply state
+                        rerun()
+                    else:
+                        st.error("Reply cannot be empty")
+
+            # Display replies under each main suggestion
+            displayed_replies = set()  # To track displayed replies and avoid duplicates
+            for sugg_id, sugg_user, suggestion, _ in suggestions:
+                if suggestion.startswith("Reply to"):
+                    if suggestion not in displayed_replies:  # Only display if not already shown
+                        cleaned_reply = suggestion.split(":", 1)[1].strip()
+                        reply_user = 'Admin' if sugg_user == 'omadmin' else 'User'
+                        st.write(f"**Reply from {reply_user}:** {cleaned_reply}")
+                        displayed_replies.add(suggestion)
         
         # Button to delete all suggestions
         if st.button("Delete All Suggestions", key="delete_all_suggestions"):
