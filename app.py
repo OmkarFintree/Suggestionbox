@@ -31,10 +31,18 @@ def create_table(conn):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL,
                 suggestion TEXT NOT NULL,
-                is_deleted INTEGER NOT NULL DEFAULT 0
+                admin_deleted INTEGER NOT NULL DEFAULT 0  -- Mark as deleted by admin
             )
         ''')
         conn.commit()
+        
+        # Ensure the admin_deleted column exists
+        c.execute("PRAGMA table_info(suggestions)")
+        columns = [column[1] for column in c.fetchall()]
+        if 'admin_deleted' not in columns:
+            c.execute('ALTER TABLE suggestions ADD COLUMN admin_deleted INTEGER NOT NULL DEFAULT 0')
+            conn.commit()
+
     except Error as e:
         st.error(e)
 
@@ -92,19 +100,19 @@ def add_suggestion(conn, username, suggestion):
     except Error as e:
         st.error(e)
 
-def get_suggestions(conn, username=None, include_deleted=False):
+def get_suggestions(conn, username=None, include_admin_deleted=False):
     try:
         c = conn.cursor()
         if username:
-            if include_deleted:
-                c.execute('SELECT id, username, suggestion FROM suggestions WHERE username = ?', (username,))
+            if include_admin_deleted:
+                c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE username = ?', (username,))
             else:
-                c.execute('SELECT id, username, suggestion FROM suggestions WHERE username = ? AND is_deleted = 0', (username,))
+                c.execute('SELECT id, username, suggestion FROM suggestions WHERE username = ? AND admin_deleted = 0', (username,))
         else:
-            if include_deleted:
-                c.execute('SELECT id, username, suggestion FROM suggestions')
+            if include_admin_deleted:
+                c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions')
             else:
-                c.execute('SELECT id, username, suggestion FROM suggestions WHERE is_deleted = 0')
+                c.execute('SELECT id, username, suggestion FROM suggestions WHERE admin_deleted = 0')
         return c.fetchall()
     except Error as e:
         st.error(e)
@@ -118,10 +126,10 @@ def update_suggestion(conn, suggestion_id, new_suggestion):
     except Error as e:
         st.error(e)
 
-def delete_suggestion(conn, suggestion_id):
+def mark_suggestion_deleted_by_admin(conn, suggestion_id):
     try:
         c = conn.cursor()
-        c.execute('UPDATE suggestions SET is_deleted = 1 WHERE id = ?', (suggestion_id,))
+        c.execute('UPDATE suggestions SET admin_deleted = 1 WHERE id = ?', (suggestion_id,))
         conn.commit()
     except Error as e:
         st.error(e)
@@ -301,7 +309,7 @@ def suggestion_box_page():
     # View Suggestions Tab
     with tab2:
         st.subheader("All Suggestions")
-        all_suggestions = get_suggestions(conn, include_deleted=True)
+        all_suggestions = get_suggestions(conn, include_admin_deleted=False)  # Exclude admin-deleted for user view
         suggestion_map = {}
 
         # Organize replies under their corresponding suggestions
@@ -346,7 +354,7 @@ def suggestion_box_page():
                                         st.error("Suggestion cannot be empty")
 
                             if delete_button:
-                                delete_suggestion(conn, sugg_id)
+                                mark_suggestion_deleted_by_admin(conn, sugg_id)
                                 st.success("Suggestion deleted.")
                                 rerun()
                         else:
@@ -433,28 +441,28 @@ def admin_panel():
     # View All Suggestions Tab
     if selected == "View All Suggestions":
         st.subheader("All Suggestions (Admin View)")
-        all_suggestions = get_suggestions(conn, include_deleted=True)
+        all_suggestions = get_suggestions(conn, include_admin_deleted=True)
         suggestion_map = {}
         
         # Organize replies under their corresponding suggestions
-        for sugg_id, sugg_user, suggestion in all_suggestions:
+        for sugg_id, sugg_user, suggestion, admin_deleted in all_suggestions:
             if suggestion.startswith("Reply to"):
                 # Extract the suggestion ID this reply belongs to
                 reply_to_id = int(suggestion.split(":")[0].split(" ")[-1])
                 if reply_to_id in suggestion_map:
-                    suggestion_map[reply_to_id].append((sugg_id, sugg_user, suggestion))
+                    suggestion_map[reply_to_id].append((sugg_id, sugg_user, suggestion, admin_deleted))
                 else:
-                    suggestion_map[reply_to_id] = [(sugg_id, sugg_user, suggestion)]
+                    suggestion_map[reply_to_id] = [(sugg_id, sugg_user, suggestion, admin_deleted)]
             else:
                 # Add normal suggestions
-                suggestion_map[sugg_id] = [(sugg_id, sugg_user, suggestion)]
+                suggestion_map[sugg_id] = [(sugg_id, sugg_user, suggestion, admin_deleted)]
 
         # Track previous user for line separation
         previous_user = None
 
         # Display suggestions and their replies
         for main_sugg_id, suggestions in suggestion_map.items():
-            for sugg_id, sugg_user, suggestion in suggestions:
+            for sugg_id, sugg_user, suggestion, admin_deleted in suggestions:
                 user_type = 'Admin' if sugg_user == 'omadmin' else 'User'
                 
                 # Only create lines between different user's suggestions
@@ -463,21 +471,24 @@ def admin_panel():
 
                 # Display suggestion with form only for main suggestions
                 if sugg_id == main_sugg_id:
-                    with st.form(key=f'suggestion_form_admin_{sugg_id}'):
-                        st.write(f"**User: {user_type}**")
-                        st.write(f"**Suggestion:** {suggestion}")
-                        delete_button = st.form_submit_button(label='Delete 🗑️')
-                        reply_button = st.form_submit_button(label='Reply 💬')
-                        if delete_button:
-                            delete_suggestion(conn, sugg_id)
-                            rerun()  # Force a rerun to update the suggestion list
-                        if reply_button and sugg_user != 'omadmin':
-                            st.session_state.reply_to = sugg_id
-                            rerun()  # Force a rerun to update the state
+                    if not admin_deleted:
+                        with st.form(key=f'suggestion_form_admin_{sugg_id}'):
+                            st.write(f"**User: {user_type}**")
+                            st.write(f"**Suggestion:** {suggestion}")
+                            delete_button = st.form_submit_button(label='Delete 🗑️')
+                            reply_button = st.form_submit_button(label='Reply 💬')
+                            if delete_button:
+                                mark_suggestion_deleted_by_admin(conn, sugg_id)
+                                st.success("Suggestion marked as deleted.")
+                                rerun()  # Force a rerun to update the suggestion list
+                            if reply_button and sugg_user != 'omadmin':
+                                st.session_state.reply_to = sugg_id
+                                rerun()  # Force a rerun to update the state
                 else:
                     # Display replies outside form context
-                    cleaned_reply = suggestion.split(":", 1)[1].strip()
-                    st.write(f"**Reply from {user_type}:** {cleaned_reply}")
+                    if not admin_deleted:
+                        cleaned_reply = suggestion.split(":", 1)[1].strip()
+                        st.write(f"**Reply from {user_type}:** {cleaned_reply}")
 
                 # Update previous user to current
                 previous_user = sugg_user
