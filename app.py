@@ -3,7 +3,6 @@ import sqlite3
 from sqlite3 import Error
 from streamlit_option_menu import option_menu
 
-# Streamlit page configuration
 st.set_page_config(
     page_icon="🗳",
     page_title="Fintree Suggestion Box"
@@ -16,7 +15,7 @@ def create_connection():
         conn = sqlite3.connect('fintree_suggestion_box.db')
         create_table(conn)  # Create tables if they don't exist
     except Error as e:
-        st.error(f"Database connection error: {e}")
+        st.error(e)
     return conn
 
 # Create tables for users and suggestions
@@ -31,7 +30,7 @@ def create_table(conn):
                 username TEXT NOT NULL,
                 password TEXT NOT NULL,
                 contact_number TEXT NOT NULL,
-                suggestion_access INTEGER NOT NULL DEFAULT 0
+                suggestion_access INTEGER NOT NULL
             )
         ''')
 
@@ -53,7 +52,7 @@ def create_table(conn):
 
         conn.commit()
     except Error as e:
-        st.error(f"Error creating table: {e}")
+        st.error(e)
 
 # Helper functions for database operations
 def get_user(conn, username):
@@ -62,7 +61,7 @@ def get_user(conn, username):
         c.execute('SELECT * FROM users WHERE username = ?', (username,))
         return c.fetchone()
     except Error as e:
-        st.error(f"Error retrieving user: {e}")
+        st.error(e)
         return None
 
 def get_all_users(conn):
@@ -71,17 +70,16 @@ def get_all_users(conn):
         c.execute('SELECT username, suggestion_access FROM users')
         return c.fetchall()
     except Error as e:
-        st.error(f"Error retrieving all users: {e}")
+        st.error(e)
         return []
 
 def add_user(conn, username, password, contact_number):
     try:
         c = conn.cursor()
-        c.execute('INSERT INTO users (username, password, contact_number, suggestion_access) VALUES (?, ?, ?, ?)', 
-                  (username, password, contact_number, 0))
+        c.execute('INSERT INTO users (username, password, contact_number, suggestion_access) VALUES (?, ?, ?, ?)', (username, password, contact_number, 0))
         conn.commit()
     except Error as e:
-        st.error(f"Error adding user: {e}")
+        st.error(e)
 
 def update_password(conn, username, new_password):
     try:
@@ -89,7 +87,7 @@ def update_password(conn, username, new_password):
         c.execute('UPDATE users SET password = ? WHERE username = ?', (new_password, username))
         conn.commit()
     except Error as e:
-        st.error(f"Error updating password: {e}")
+        st.error(e)
 
 def update_user_access(conn, username, access):
     try:
@@ -97,7 +95,7 @@ def update_user_access(conn, username, access):
         c.execute('UPDATE users SET suggestion_access = ? WHERE username = ?', (access, username))
         conn.commit()
     except Error as e:
-        st.error(f"Error updating user access: {e}")
+        st.error(e)
 
 def admin_login(username, password):
     return username == "omadmin" and password == "ompass"
@@ -108,22 +106,24 @@ def add_suggestion(conn, username, suggestion):
         c.execute('INSERT INTO suggestions (username, suggestion) VALUES (?, ?)', (username, suggestion))
         conn.commit()
     except Error as e:
-        st.error(f"Error adding suggestion: {e}")
+        st.error(e)
 
-def get_suggestions(conn, username=None, include_admin_deleted=False, is_admin=False):
+def get_suggestions(conn, username=None, include_admin_deleted=False):
     try:
         c = conn.cursor()
-        if is_admin:
+        if username:
+            if include_admin_deleted:
+                c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE username = ?', (username,))
+            else:
+                c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE username = ? AND admin_deleted = 0', (username,))
+        else:
             if include_admin_deleted:
                 c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions')
             else:
                 c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE admin_deleted = 0')
-        else:
-            c.execute('SELECT id, username, suggestion, admin_deleted FROM suggestions WHERE username = ? AND admin_deleted = 0', (username,))
-        
         return c.fetchall()
     except Error as e:
-        st.error(f"Error retrieving suggestions: {e}")
+        st.error(e)
         return []
 
 def update_suggestion(conn, suggestion_id, new_suggestion):
@@ -132,7 +132,7 @@ def update_suggestion(conn, suggestion_id, new_suggestion):
         c.execute('UPDATE suggestions SET suggestion = ? WHERE id = ?', (new_suggestion, suggestion_id))
         conn.commit()
     except Error as e:
-        st.error(f"Error updating suggestion: {e}")
+        st.error(e)
 
 def mark_suggestion_deleted_by_admin(conn, suggestion_id):
     try:
@@ -140,7 +140,7 @@ def mark_suggestion_deleted_by_admin(conn, suggestion_id):
         c.execute('UPDATE suggestions SET admin_deleted = 1 WHERE id = ?', (suggestion_id,))
         conn.commit()
     except Error as e:
-        st.error(f"Error deleting suggestion: {e}")
+        st.error(e)
 
 def delete_all_suggestions(conn):
     try:
@@ -148,7 +148,7 @@ def delete_all_suggestions(conn):
         c.execute('DELETE FROM suggestions')
         conn.commit()
     except Error as e:
-        st.error(f"Error deleting all suggestions: {e}")
+        st.error(e)
 
 def add_reply(conn, username, suggestion_id, reply):
     try:
@@ -156,7 +156,7 @@ def add_reply(conn, username, suggestion_id, reply):
         c.execute('INSERT INTO suggestions (username, suggestion) VALUES (?, ?)', (username, f"Reply to {suggestion_id}: {reply}"))
         conn.commit()
     except Error as e:
-        st.error(f"Error adding reply: {e}")
+        st.error(e)
 
 # Streamlit Login Page
 def login_page():
@@ -311,8 +311,8 @@ def suggestion_box_page():
 
     # View Suggestions Tab
     with tab2:
-        st.subheader("Your Suggestions")
-        all_suggestions = get_suggestions(conn, username=st.session_state.username, is_admin=st.session_state.is_admin, include_admin_deleted=False)
+        st.subheader("All Suggestions")
+        all_suggestions = get_suggestions(conn, include_admin_deleted=False)
         suggestion_map = {}
 
         # Organize replies under their corresponding suggestions
@@ -337,35 +337,36 @@ def suggestion_box_page():
                         user_type = 'Admin' if sugg_user == 'omadmin' else 'User'
                         st.write(f"**User: {user_type}**")
                         st.write(f"**Suggestion:** {suggestion}")
-
-                        # If the suggestion is being edited, show the editing interface
-                        if st.session_state.get(f"editing_{sugg_id}", False):
-                            new_text = st.text_area("Edit Suggestion", value=suggestion, key=f"edit_text_{sugg_id}")
-                            if st.form_submit_button("Save Changes"):
-                                if new_text.strip():
-                                    update_suggestion(conn, sugg_id, new_text)
-                                    st.success("Suggestion updated.")
-                                    st.session_state[f"editing_{sugg_id}"] = False  # Reset the editing state
-                                    st.session_state.page = 'suggestion_box'
-                                else:
-                                    st.error("Suggestion cannot be empty")
-                        else:
+                        if sugg_user == st.session_state.username:
                             # Show Edit and Delete buttons for the user's own suggestion
-                            if sugg_user == st.session_state.username:
-                                col1, col2 = st.columns([1, 1])
-                                with col1:
-                                    if st.form_submit_button(label='Edit'):
-                                        st.session_state[f"editing_{sugg_id}"] = True
-                                with col2:
-                                    if st.form_submit_button(label='Delete'):
-                                        mark_suggestion_deleted_by_admin(conn, sugg_id)
-                                        st.success("Suggestion deleted.")
+                            col1, col2 = st.columns([1, 1])
+                            with col1:
+                                edit_button = st.form_submit_button(label='Edit')
+                            with col2:
+                                delete_button = st.form_submit_button(label='Delete')
+
+                            # Handle edit and delete actions
+                            if edit_button:
+                                new_text = st.text_area("Edit Suggestion", value=suggestion, key=f"edit_text_{sugg_id}")
+                                if st.form_submit_button("Save Changes"):
+                                    if new_text.strip():
+                                        update_suggestion(conn, sugg_id, new_text)
+                                        st.success("Suggestion updated.")
                                         st.session_state.page = 'suggestion_box'
-                            else:
-                                # Show Reply button for other users' suggestions
-                                if st.form_submit_button(label='Reply'):
-                                    st.session_state.reply_to = sugg_id
-                                    st.session_state.page = 'suggestion_box'
+                                    else:
+                                        st.error("Suggestion cannot be empty")
+
+                            if delete_button:
+                                mark_suggestion_deleted_by_admin(conn, sugg_id)
+                                st.success("Suggestion deleted.")
+                                st.session_state.page = 'suggestion_box'
+                        else:
+                            # Show Reply button for other users' suggestions
+                            reply_button = st.form_submit_button(label='Reply')
+
+                            if reply_button:
+                                st.session_state.reply_to = sugg_id
+                                st.session_state.page = 'suggestion_box'
 
             # Display reply box if needed (outside form)
             if 'reply_to' in st.session_state and st.session_state.reply_to == main_sugg_id:
@@ -390,7 +391,7 @@ def suggestion_box_page():
                         displayed_replies.add(suggestion)
 
         if not all_suggestions:
-            st.info("You have no suggestions yet.")
+            st.info("There are no suggestions yet.")
 
     # Logout button
     if st.button("Logout"):
@@ -445,7 +446,7 @@ def admin_panel():
     # View All Suggestions Tab
     if selected == "View All Suggestions":
         st.subheader("All Suggestions (Admin View)")
-        all_suggestions = get_suggestions(conn, is_admin=True, include_admin_deleted=True)
+        all_suggestions = get_suggestions(conn, include_admin_deleted=True)
         suggestion_map = {}
         
         # Organize replies under their corresponding suggestions
