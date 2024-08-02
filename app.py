@@ -313,7 +313,7 @@ def suggestion_box_page():
 
     # View Suggestions Tab
     with tab2:
-        st.subheader("Your Suggestions")
+        st.subheader("All Suggestions")
         all_suggestions = get_suggestions(conn, username=st.session_state.username, include_admin_deleted=False)
         suggestion_map = {}
 
@@ -335,42 +335,64 @@ def suggestion_box_page():
             # Handle the main suggestion with form
             for sugg_id, sugg_user, suggestion, admin_deleted in suggestions:
                 if sugg_id == main_sugg_id and not admin_deleted:  # Main suggestion
-                    if sugg_user == st.session_state.username:  # Check if the suggestion belongs to the current user
-                        # Handle editing state
-                        if f"editing_{sugg_id}" not in st.session_state:
-                            st.session_state[f"editing_{sugg_id}"] = False
+                    with st.form(key=f'suggestion_form_{sugg_id}'):
+                        user_type = 'Admin' if sugg_user == 'omadmin' else 'User'
+                        st.write(f"**User: {user_type}**")
+                        st.write(f"**Suggestion:** {suggestion}")
 
-                        if not st.session_state[f"editing_{sugg_id}"]:
-                            # Display suggestion and edit/delete buttons
-                            st.write(f"**Suggestion:** {suggestion}")
-                            col1, col2 = st.columns([1, 1])
-                            with col1:
-                                if st.button('Edit', key=f'edit_{sugg_id}'):
-                                    st.session_state[f"editing_{sugg_id}"] = True
-                            with col2:
-                                if st.button('Delete', key=f'delete_{sugg_id}'):
-                                    mark_suggestion_deleted_by_admin(conn, sugg_id)
-                                    st.success("Suggestion deleted.")
-                                    st.session_state.page = 'suggestion_box'
-                        else:
-                            # Display edit text area and save/cancel buttons
+                        # If the suggestion is being edited, show the editing interface
+                        if st.session_state.get(f"editing_{sugg_id}", False):
                             new_text = st.text_area("Edit Suggestion", value=suggestion, key=f"edit_text_{sugg_id}")
-                            col1, col2 = st.columns([1, 1])
-                            with col1:
-                                if st.button('Save Changes', key=f'save_{sugg_id}'):
-                                    if new_text.strip():
-                                        update_suggestion(conn, sugg_id, new_text)
-                                        st.success("Suggestion updated.")
-                                        st.session_state[f"editing_{sugg_id}"] = False
+                            if st.form_submit_button("Save Changes"):
+                                if new_text.strip():
+                                    update_suggestion(conn, sugg_id, new_text)
+                                    st.success("Suggestion updated.")
+                                    st.session_state[f"editing_{sugg_id}"] = False  # Reset the editing state
+                                    st.session_state.page = 'suggestion_box'
+                                else:
+                                    st.error("Suggestion cannot be empty")
+                        else:
+                            # Show Edit and Delete buttons for the user's own suggestion
+                            if sugg_user == st.session_state.username:
+                                col1, col2 = st.columns([1, 1])
+                                with col1:
+                                    if st.form_submit_button(label='Edit'):
+                                        st.session_state[f"editing_{sugg_id}"] = True
+                                with col2:
+                                    if st.form_submit_button(label='Delete'):
+                                        mark_suggestion_deleted_by_admin(conn, sugg_id)
+                                        st.success("Suggestion deleted.")
                                         st.session_state.page = 'suggestion_box'
-                                    else:
-                                        st.error("Suggestion cannot be empty")
-                            with col2:
-                                if st.button('Cancel', key=f'cancel_{sugg_id}'):
-                                    st.session_state[f"editing_{sugg_id}"] = False
+                            else:
+                                # Show Reply button for other users' suggestions
+                                if st.form_submit_button(label='Reply'):
+                                    st.session_state.reply_to = sugg_id
+                                    st.session_state.page = 'suggestion_box'
+
+            # Display reply box if needed (outside form)
+            if 'reply_to' in st.session_state and st.session_state.reply_to == main_sugg_id:
+                reply = st.text_area("Your Reply", key=f"reply_text_{main_sugg_id}_unique")
+                if st.button(label="Submit Reply", key=f"submit_reply_{main_sugg_id}_unique"):
+                    if reply.strip():
+                        add_reply(conn, st.session_state.username, main_sugg_id, reply)
+                        st.success("Reply submitted")
+                        del st.session_state.reply_to  # Reset reply state
+                        st.session_state.page = 'suggestion_box'
+                    else:
+                        st.error("Reply cannot be empty")
+
+            # Display replies under each main suggestion
+            displayed_replies = set()  # To track displayed replies and avoid duplicates
+            for sugg_id, sugg_user, suggestion, _ in suggestions:
+                if suggestion.startswith("Reply to"):
+                    if suggestion not in displayed_replies:  # Only display if not already shown
+                        cleaned_reply = suggestion.split(":", 1)[1].strip()
+                        reply_user = 'Admin' if sugg_user == 'omadmin' else 'User'
+                        st.write(f"**Reply from {reply_user}:** {cleaned_reply}")
+                        displayed_replies.add(suggestion)
 
         if not all_suggestions:
-            st.info("You have not submitted any suggestions yet.")
+            st.info("There are no suggestions yet.")
 
     # Logout button
     if st.button("Logout"):
