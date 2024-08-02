@@ -3,6 +3,11 @@ import sqlite3
 from sqlite3 import Error
 from streamlit_option_menu import option_menu
 
+
+st.set_page_config(
+    page_icon="🗳",
+    page_title="Fintree Suggestion Box"
+)
 # Database connection
 def create_connection():
     conn = None
