@@ -22,6 +22,8 @@ def create_connection():
 def create_table(conn):
     try:
         c = conn.cursor()
+
+        # Create users table
         c.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,6 +33,8 @@ def create_table(conn):
                 suggestion_access INTEGER NOT NULL
             )
         ''')
+
+        # Create suggestions table with admin_deleted column
         c.execute('''
             CREATE TABLE IF NOT EXISTS suggestions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,6 +43,13 @@ def create_table(conn):
                 admin_deleted INTEGER NOT NULL DEFAULT 0
             )
         ''')
+
+        # Check if admin_deleted column exists
+        c.execute("PRAGMA table_info(suggestions)")
+        columns = [column[1] for column in c.fetchall()]
+        if 'admin_deleted' not in columns:
+            c.execute('ALTER TABLE suggestions ADD COLUMN admin_deleted INTEGER NOT NULL DEFAULT 0')
+
         conn.commit()
     except Error as e:
         st.error(e)
