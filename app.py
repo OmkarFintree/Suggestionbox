@@ -147,9 +147,6 @@ def add_reply(conn, username, suggestion_id, reply):
     except Error as e:
         st.error(e)
 
-def rerun():
-    st.experimental_rerun()
-
 # Streamlit Login Page
 def login_page():
     st.title("📮 Fintree Suggestion Box - Login")
@@ -186,7 +183,7 @@ def login_page():
             if user and user[2] == password:  # user[2] is the password
                 st.success(f"Welcome {username} 🎉")
                 user_login(username)
-                rerun()  # Force a rerun to update the state
+                st.session_state.page = 'suggestion_box'
             else:
                 st.error("Invalid Username or Password")
 
@@ -209,7 +206,7 @@ def login_page():
                     add_user(conn, new_username, new_password, contact_number)
                     st.success("You have successfully registered!")
                     user_login(new_username)
-                    rerun()  # Force a rerun to update the state
+                    st.session_state.page = 'suggestion_box'
 
     # Forgot Password Tab
     with tab3:
@@ -222,7 +219,6 @@ def login_page():
                 st.success("Verification successful. Please enter your new password.")
                 st.session_state.verified = True
                 st.session_state.username = username
-                rerun()  # Force a rerun to update the state
             else:
                 st.error("Invalid Username or Contact Number")
         
@@ -237,7 +233,6 @@ def login_page():
                     st.success("Password has been reset")
                     st.session_state.verified = False  # Reset the verification state
                     st.session_state.username = ""
-                    rerun()  # Force a rerun to update the state
 
     # Admin Login Tab
     with tab4:
@@ -248,7 +243,7 @@ def login_page():
             if admin_login(admin_username, admin_password):
                 st.success("Welcome Admin 🎉")
                 user_login("omadmin", is_admin=True)
-                rerun()  # Force a rerun to update the state
+                st.session_state.page = 'admin_panel'
             else:
                 st.error("Invalid Admin Username or Password")
 
@@ -270,7 +265,7 @@ def suggestion_box_page():
             st.session_state.logged_in = False
             st.session_state.username = ""
             st.session_state.is_admin = False
-            rerun()  # Force a rerun to update the state
+            st.session_state.page = 'login'
         return
 
     # Initialize submission state
@@ -346,21 +341,21 @@ def suggestion_box_page():
                                     if new_text.strip():
                                         update_suggestion(conn, sugg_id, new_text)
                                         st.success("Suggestion updated.")
-                                        rerun()
+                                        st.session_state.page = 'suggestion_box'
                                     else:
                                         st.error("Suggestion cannot be empty")
 
                             if delete_button:
                                 mark_suggestion_deleted_by_admin(conn, sugg_id)
                                 st.success("Suggestion deleted.")
-                                rerun()
+                                st.session_state.page = 'suggestion_box'
                         else:
                             # Show Reply button for other users' suggestions
                             reply_button = st.form_submit_button(label='Reply')
 
                             if reply_button:
                                 st.session_state.reply_to = sugg_id
-                                rerun()
+                                st.session_state.page = 'suggestion_box'
 
             # Display reply box if needed (outside form)
             if 'reply_to' in st.session_state and st.session_state.reply_to == main_sugg_id:
@@ -370,7 +365,7 @@ def suggestion_box_page():
                         add_reply(conn, st.session_state.username, main_sugg_id, reply)
                         st.success("Reply submitted")
                         del st.session_state.reply_to  # Reset reply state
-                        rerun()
+                        st.session_state.page = 'suggestion_box'
                     else:
                         st.error("Reply cannot be empty")
 
@@ -392,7 +387,7 @@ def suggestion_box_page():
         st.session_state.logged_in = False
         st.session_state.username = ""
         st.session_state.is_admin = False
-        rerun()  # Force a rerun to update the state
+        st.session_state.page = 'login'
 
 # Admin Panel with Option Menu
 def admin_panel():
@@ -480,7 +475,6 @@ def admin_panel():
                                 del st.session_state["admin_reply_to"]
                             else:
                                 st.session_state["admin_reply_to"] = sugg_id
-                            rerun()  # Force a rerun to update the state
 
                 # Update previous user to current
                 previous_user = sugg_user
@@ -493,7 +487,6 @@ def admin_panel():
                         add_reply(conn, "omadmin", main_sugg_id, reply)
                         st.success("Reply submitted")
                         del st.session_state["admin_reply_to"]  # Reset reply state
-                        rerun()
                     else:
                         st.error("Reply cannot be empty")
 
@@ -511,7 +504,6 @@ def admin_panel():
         if st.button("Delete All Suggestions", key="delete_all_suggestions"):
             delete_all_suggestions(conn)
             st.success("All suggestions have been deleted.")
-            rerun()
 
     # User Control Tab
     if selected == "User Control":
@@ -537,7 +529,6 @@ def admin_panel():
                                 st.session_state.access_messages[user] = f"Access has been granted to {user}."
                             else:
                                 st.session_state.access_messages[user] = f"Access has been taken back from {user}."
-                            st.experimental_rerun()  # Refresh the page to update the state
 
                 # Display the access message for the user
                 if user in st.session_state.access_messages:
@@ -558,7 +549,7 @@ def admin_panel():
         st.session_state.logged_in = False
         st.session_state.username = ""
         st.session_state.is_admin = False
-        rerun()  # Force a rerun to update the state
+        st.session_state.page = 'login'
 
 # Main function
 if __name__ == "__main__":
